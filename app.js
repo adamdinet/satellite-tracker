@@ -18,11 +18,11 @@ var activeFilters = {};
 var loadedGroups  = {}; 
 var searchQ  = '';
 var scene, camera, renderer, earthMesh, satGroup;
+var visibilityCone = null; // NEW: The 3D Cone of Visibility object
 var dragging = false, px = 0, py = 0;
 var rotX = 0.3, rotY = 0, zoom = 2.8;
 var lastUpd  = 0;
 
-// INITIALLY: Turn only GPS on, everything else off
 CATS.forEach(function(c){ 
   activeFilters[c.id] = (c.id === 'gps'); 
   loadedGroups[c.id]  = false;
@@ -111,8 +111,7 @@ function initThree() {
   var texLoader = new THREE.TextureLoader();
   var earthTex  = texLoader.load(
     'https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg',
-    undefined,
-    undefined,
+    undefined, undefined,
     function() {
       earthMesh.material = new THREE.MeshPhongMaterial({
         color:0x1a3a5c, emissive:0x0a1a2a, specular:0x224466, shininess:12
@@ -239,7 +238,15 @@ function animate(ts) {
       m.position.copy(lla2xyz(pos.lat, pos.lon, pos.alt));
       sat.pos = pos;
     });
-    if (selected && selected.pos) updateInfoCard(selected);
+    
+    if (selected && selected.pos) {
+      updateInfoCard(selected);
+      // Update visibility cone position in real-time as the satellite moves
+      if (visibilityCone) {
+        visibilityCone.position.copy(lla2xyz(selected.pos.lat, selected.pos.lon, selected.pos.alt));
+        visibilityCone.lookAt(0,0,0);
+      }
+    }
   }
   earthMesh.rotation.y += 0.0004;
   camera.position.x = zoom * Math.sin(rotY) * Math.cos(rotX);
@@ -303,13 +310,54 @@ function selectSat(sat) {
   document.getElementById('info').style.display = 'block';
   renderList();
 
-  // CAMERA FLY-TO FEATURE: Center the camera on the selected satellite
   if (sat.pos) {
+    // 1. Center camera on the satellite
     rotX = sat.pos.lat * (Math.PI / 180);
     rotY = (sat.pos.lon + 90) * (Math.PI / 180);
-    
-    // Zoom in a bit when clicked
     zoom = 1.8; 
+
+    // 2. Clear old visibility cone if one exists
+    if (visibilityCone) {
+      scene.remove(visibilityCone);
+      visibilityCone.geometry.dispose();
+      visibilityCone.material.dispose();
+      visibilityCone = null;
+    }
+
+    // 3. Calculate Orbital Geometry for the Cone
+    // r = distance from earth center to satellite
+    var r = ER + (sat.pos.alt / 6371) * ER;
+    // y = distance from earth center to the flat base of the cone
+    var y = (ER * ER) / r;
+    // H = height of the cone from base to apex (satellite)
+    var H = r - y;
+    // rad = radius of the cone base on the Earth's surface
+    var rad = ER * Math.sqrt(1 - Math.pow(ER/r, 2));
+
+    // Build the Geometry
+    var geo = new THREE.ConeGeometry(rad, H, 64, 1, true);
+    geo.translate(0, -H/2, 0); // Shift apex to local origin
+    geo.rotateX(Math.PI/2); // Aim the base correctly so lookAt() points it at Earth
+
+    // Match the color to the satellite category
+    var cat = CATS.find(function(c){ return c.id === sat.cat; });
+    var col = cat ? cat.color : '#ffffff';
+
+    visibilityCone = new THREE.Mesh(
+      geo,
+      new THREE.MeshBasicMaterial({
+        color: col,
+        transparent: true,
+        opacity: 0.15,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending
+      })
+    );
+    
+    visibilityCone.position.copy(lla2xyz(sat.pos.lat, sat.pos.lon, sat.pos.alt));
+    visibilityCone.lookAt(0, 0, 0); // Point directly down to Earth's core
+    scene.add(visibilityCone);
   }
 }
 
@@ -452,9 +500,20 @@ document.addEventListener('DOMContentLoaded', function() {
     searchQ = e.target.value.toLowerCase().trim();
     applyFilters();
   });
+  
+  // CLEAR CONE WHEN CLOSING INFO
   document.getElementById('info-close').addEventListener('click', function() {
     document.getElementById('info').style.display = 'none';
-    selected = null; renderList();
+    selected = null; 
+    
+    if (visibilityCone) {
+      scene.remove(visibilityCone);
+      visibilityCone.geometry.dispose();
+      visibilityCone.material.dispose();
+      visibilityCone = null;
+    }
+    
+    renderList();
   });
   
   loadInitial();
