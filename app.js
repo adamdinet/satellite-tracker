@@ -18,7 +18,7 @@ var activeFilters = {};
 var loadedGroups  = {}; 
 var searchQ  = '';
 var scene, camera, renderer, earthMesh, satGroup;
-var visibilityCone = null; // NEW: The 3D Cone of Visibility object
+var visibilityCone = null; 
 var dragging = false, px = 0, py = 0;
 var rotX = 0.3, rotY = 0, zoom = 2.8;
 var lastUpd  = 0;
@@ -176,7 +176,7 @@ function initThree() {
     px = e.clientX; py = e.clientY;
   });
   cvs.addEventListener('wheel', function(e){
-    zoom = Math.max(1.3, Math.min(8, zoom + e.deltaY*0.003));
+    zoom = Math.max(1.3, Math.min(15, zoom + e.deltaY*0.005));
     e.preventDefault();
   }, { passive:false });
   cvs.addEventListener('click', onCanvasClick);
@@ -314,8 +314,7 @@ function selectSat(sat) {
     // 1. Center camera on the satellite
     rotX = sat.pos.lat * (Math.PI / 180);
     rotY = (sat.pos.lon + 90) * (Math.PI / 180);
-    zoom = 1.8; 
-
+    
     // 2. Clear old visibility cone if one exists
     if (visibilityCone) {
       scene.remove(visibilityCone);
@@ -325,21 +324,19 @@ function selectSat(sat) {
     }
 
     // 3. Calculate Orbital Geometry for the Cone
-    // r = distance from earth center to satellite
     var r = ER + (sat.pos.alt / 6371) * ER;
-    // y = distance from earth center to the flat base of the cone
+    
+    // Set dynamic zoom to be slightly further out than the satellite's orbit
+    zoom = r + 1.2; 
+    
     var y = (ER * ER) / r;
-    // H = height of the cone from base to apex (satellite)
     var H = r - y;
-    // rad = radius of the cone base on the Earth's surface
     var rad = ER * Math.sqrt(1 - Math.pow(ER/r, 2));
 
-    // Build the Geometry
     var geo = new THREE.ConeGeometry(rad, H, 64, 1, true);
-    geo.translate(0, -H/2, 0); // Shift apex to local origin
-    geo.rotateX(Math.PI/2); // Aim the base correctly so lookAt() points it at Earth
+    geo.translate(0, -H/2, 0); 
+    geo.rotateX(-Math.PI/2); // FIXED: Aim the base correctly so lookAt() points it AT Earth
 
-    // Match the color to the satellite category
     var cat = CATS.find(function(c){ return c.id === sat.cat; });
     var col = cat ? cat.color : '#ffffff';
 
@@ -348,7 +345,7 @@ function selectSat(sat) {
       new THREE.MeshBasicMaterial({
         color: col,
         transparent: true,
-        opacity: 0.15,
+        opacity: 0.3, // INCREASED: Make it glow brighter
         side: THREE.DoubleSide,
         depthWrite: false,
         blending: THREE.AdditiveBlending
@@ -356,7 +353,7 @@ function selectSat(sat) {
     );
     
     visibilityCone.position.copy(lla2xyz(sat.pos.lat, sat.pos.lon, sat.pos.alt));
-    visibilityCone.lookAt(0, 0, 0); // Point directly down to Earth's core
+    visibilityCone.lookAt(0, 0, 0); 
     scene.add(visibilityCone);
   }
 }
@@ -501,7 +498,6 @@ document.addEventListener('DOMContentLoaded', function() {
     applyFilters();
   });
   
-  // CLEAR CONE WHEN CLOSING INFO
   document.getElementById('info-close').addEventListener('click', function() {
     document.getElementById('info').style.display = 'none';
     selected = null; 
