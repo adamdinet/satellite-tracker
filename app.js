@@ -24,7 +24,8 @@ var lastUpd  = 0;
 CATS.forEach(function(c){ activeFilters[c.id] = true; });
 
 function fetchGroup(catId, done) {
-  var url = 'http://localhost:8765/tle?group=' + catId;
+  // FIXED: Changed to a relative path so it works in production on Render
+  var url = '/tle?group=' + catId;
   fetch(url)
     .then(function(r){
       if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -357,59 +358,4 @@ function updateFilterBtns() {
 }
 
 function buildLegend() {
-  var body = document.getElementById('legend-body');
-  body.innerHTML = '';
-  CATS.forEach(function(cat) {
-    var row = document.createElement('div');
-    row.className = 'lrow';
-    row.innerHTML = '<div class="ldot" style="background:' + cat.color + '"></div>' +
-                    '<span style="color:#8090a0">' + cat.label + '</span>';
-    body.appendChild(row);
-  });
-}
-
-function loadAll() {
-  var total = CATS.length, done = 0, loaded = 0;
-  function onDone(catId, err, text) {
-    done++;
-    if (!err && text) {
-      var sats = parseTLE(text, catId);
-      allSats  = allSats.concat(sats);
-      loaded  += sats.length;
-    } else {
-      console.warn('Failed:', catId, err ? err.message : 'no data');
-    }
-    document.getElementById('load-msg').textContent =
-      'Loaded ' + loaded + ' satellites (' + done + '/' + total + ' groups)…';
-    if (done === total) {
-      setTimeout(function() {
-        buildMeshes();
-        applyFilters();
-        document.getElementById('panel-sub').textContent =
-          allSats.length.toLocaleString() + ' satellites loaded';
-        document.getElementById('upd-time').textContent =
-          new Date().toUTCString().slice(17, 25) + ' UTC';
-        document.getElementById('loading').style.display = 'none';
-        requestAnimationFrame(animate);
-      }, 100);
-    }
-  }
-  CATS.forEach(function(cat) {
-    fetchGroup(cat.id, function(err, text) { onDone(cat.id, err, text); });
-  });
-}
-
-document.addEventListener('DOMContentLoaded', function() {
-  initThree();
-  buildFilterBar();
-  buildLegend();
-  document.getElementById('search').addEventListener('input', function(e) {
-    searchQ = e.target.value.toLowerCase().trim();
-    applyFilters();
-  });
-  document.getElementById('info-close').addEventListener('click', function() {
-    document.getElementById('info').style.display = 'none';
-    selected = null; renderList();
-  });
-  loadAll();
-});
+  var body = document.getElementById('legend-body
