@@ -15,7 +15,7 @@ var allSats  = [];
 var filtered = [];
 var selected = null;
 var activeFilters = {};
-var loadedGroups  = {}; // NEW: Track which data we have actually downloaded
+var loadedGroups  = {}; 
 var searchQ  = '';
 var scene, camera, renderer, earthMesh, satGroup;
 var dragging = false, px = 0, py = 0;
@@ -302,6 +302,15 @@ function selectSat(sat) {
   updateInfoCard(sat);
   document.getElementById('info').style.display = 'block';
   renderList();
+
+  // CAMERA FLY-TO FEATURE: Center the camera on the selected satellite
+  if (sat.pos) {
+    rotX = sat.pos.lat * (Math.PI / 180);
+    rotY = (sat.pos.lon + 90) * (Math.PI / 180);
+    
+    // Zoom in a bit when clicked
+    zoom = 1.8; 
+  }
 }
 
 function updateInfoCard(sat) {
@@ -320,7 +329,6 @@ function updateInfoCard(sat) {
   }
 }
 
-// Function to fetch a specific group only when a user clicks its button
 function loadSpecificGroup(catId) {
   var btn = document.querySelector('.fbtn[data-id="' + catId + '"]');
   if (btn) btn.textContent = 'Loading...';
@@ -340,7 +348,7 @@ function loadSpecificGroup(catId) {
       document.getElementById('panel-sub').textContent = allSats.length.toLocaleString() + ' satellites loaded';
     } else {
       console.warn('Failed to load:', catId);
-      activeFilters[catId] = false; // Turn the filter back off if it failed
+      activeFilters[catId] = false; 
       updateFilterBtns();
     }
   });
@@ -359,7 +367,6 @@ function buildFilterBar() {
 
     CATS.forEach(function(c){ 
       activeFilters[c.id] = newState; 
-      // If turning on and we haven't downloaded it yet, fetch it!
       if (newState && !loadedGroups[c.id]) {
         loadSpecificGroup(c.id);
       }
@@ -378,7 +385,6 @@ function buildFilterBar() {
       activeFilters[cat.id] = !activeFilters[cat.id];
       updateFilterBtns(); 
       
-      // If we just clicked it ON, and it hasn't been loaded yet, fetch it!
       if (activeFilters[cat.id] && !loadedGroups[cat.id]) {
         loadSpecificGroup(cat.id);
       } else {
@@ -416,7 +422,6 @@ function buildLegend() {
   });
 }
 
-// Replaced loadAll() with loadInitial() to only pull GPS on startup
 function loadInitial() {
   document.getElementById('load-msg').textContent = 'Fetching GPS Data...';
   
@@ -434,7 +439,6 @@ function loadInitial() {
     document.getElementById('panel-sub').textContent = allSats.length.toLocaleString() + ' satellites loaded';
     document.getElementById('upd-time').textContent = new Date().toUTCString().slice(17, 25) + ' UTC';
     
-    // Dismiss loading screen immediately after GPS finishes
     document.getElementById('loading').style.display = 'none';
     requestAnimationFrame(animate);
   });
@@ -453,6 +457,5 @@ document.addEventListener('DOMContentLoaded', function() {
     selected = null; renderList();
   });
   
-  // Start the initialization sequence
   loadInitial();
 });
