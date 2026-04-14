@@ -1,24 +1,34 @@
 'use strict';
 
-// Temporarily testing just GPS to avoid Celestrak rate limits
 var CATS = [
-  { id:'gps', label:'GPS', color:'#ffcc00' }
+  { id:'stations', label:'Space Stations', color:'#00ffcc' },
+  { id:'starlink',  label:'Starlink',       color:'#4488ff' },
+  { id:'gps',       label:'GPS',            color:'#ffcc00' },
+  { id:'weather',   label:'Weather',        color:'#ff8800' },
+  { id:'military',  label:'Military',       color:'#ff4444' },
+  { id:'science',   label:'Science',        color:'#cc44ff' },
+  { id:'amateur',   label:'Amateur',        color:'#44ff88' },
+  { id:'debris',    label:'Debris',         color:'#556677' },
 ];
 
 var allSats  = [];
 var filtered = [];
 var selected = null;
 var activeFilters = {};
+var loadedGroups  = {}; // NEW: Track which data we have actually downloaded
 var searchQ  = '';
 var scene, camera, renderer, earthMesh, satGroup;
 var dragging = false, px = 0, py = 0;
 var rotX = 0.3, rotY = 0, zoom = 2.8;
 var lastUpd  = 0;
 
-CATS.forEach(function(c){ activeFilters[c.id] = true; });
+// INITIALLY: Turn only GPS on, everything else off
+CATS.forEach(function(c){ 
+  activeFilters[c.id] = (c.id === 'gps'); 
+  loadedGroups[c.id]  = false;
+});
 
 function fetchGroup(catId, done) {
-  // FIXED: Changed to a relative path so it works in production on Render
   var url = '/tle?group=' + catId;
   fetch(url)
     .then(function(r){
@@ -104,7 +114,6 @@ function initThree() {
     undefined,
     undefined,
     function() {
-      // Texture failed to load (e.g. no internet) — fall back to solid color
       earthMesh.material = new THREE.MeshPhongMaterial({
         color:0x1a3a5c, emissive:0x0a1a2a, specular:0x224466, shininess:12
       });
@@ -126,7 +135,6 @@ function initThree() {
   );
   scene.add(earthMesh);
 
-  // Atmosphere glow
   scene.add(new THREE.Mesh(
     new THREE.SphereGeometry(ER * 1.02, 32, 32),
     new THREE.MeshPhongMaterial({ color:0x0044aa, transparent:true, opacity:0.08, side:THREE.FrontSide })
@@ -312,25 +320,70 @@ function updateInfoCard(sat) {
   }
 }
 
+// Function to fetch a specific group only when a user clicks its button
+function loadSpecificGroup(catId) {
+  var btn = document.querySelector('.fbtn[data-id="' + catId + '"]');
+  if (btn) btn.textContent = 'Loading...';
+
+  fetchGroup(catId, function(err, text) {
+    if (btn) {
+       var cat = CATS.find(function(c){ return c.id === catId; });
+       btn.textContent = cat ? cat.label : catId;
+    }
+
+    if (!err && text) {
+      var sats = parseTLE(text, catId);
+      allSats = allSats.concat(sats);
+      loadedGroups[catId] = true;
+      buildMeshes();
+      applyFilters();
+      document.getElementById('panel-sub').textContent = allSats.length.toLocaleString() + ' satellites loaded';
+    } else {
+      console.warn('Failed to load:', catId);
+      activeFilters[catId] = false; // Turn the filter back off if it failed
+      updateFilterBtns();
+    }
+  });
+}
+
 function buildFilterBar() {
   var bar = document.getElementById('filter-bar');
   bar.innerHTML = '';
   var allBtn = document.createElement('div');
   allBtn.className = 'fbtn'; allBtn.textContent = 'All'; allBtn.dataset.id = '__all__';
   allBtn.style.borderColor = '#607080'; allBtn.style.color = '#c0d0e0';
+  
   allBtn.addEventListener('click', function() {
     var allOn = CATS.every(function(c){ return activeFilters[c.id]; });
-    CATS.forEach(function(c){ activeFilters[c.id] = !allOn; });
-    updateFilterBtns(); applyFilters();
+    var newState = !allOn;
+
+    CATS.forEach(function(c){ 
+      activeFilters[c.id] = newState; 
+      // If turning on and we haven't downloaded it yet, fetch it!
+      if (newState && !loadedGroups[c.id]) {
+        loadSpecificGroup(c.id);
+      }
+    });
+    updateFilterBtns(); 
+    applyFilters();
   });
   bar.appendChild(allBtn);
+
   CATS.forEach(function(cat) {
     var btn = document.createElement('div');
     btn.className = 'fbtn'; btn.textContent = cat.label; btn.dataset.id = cat.id;
     btn.style.borderColor = cat.color; btn.style.color = cat.color;
+    
     btn.addEventListener('click', function() {
       activeFilters[cat.id] = !activeFilters[cat.id];
-      updateFilterBtns(); applyFilters();
+      updateFilterBtns(); 
+      
+      // If we just clicked it ON, and it hasn't been loaded yet, fetch it!
+      if (activeFilters[cat.id] && !loadedGroups[cat.id]) {
+        loadSpecificGroup(cat.id);
+      } else {
+        applyFilters();
+      }
     });
     bar.appendChild(btn);
   });
@@ -363,34 +416,27 @@ function buildLegend() {
   });
 }
 
-function loadAll() {
-  var total = CATS.length, done = 0, loaded = 0;
-  function onDone(catId, err, text) {
-    done++;
+// Replaced loadAll() with loadInitial() to only pull GPS on startup
+function loadInitial() {
+  document.getElementById('load-msg').textContent = 'Fetching GPS Data...';
+  
+  fetchGroup('gps', function(err, text) {
     if (!err && text) {
-      var sats = parseTLE(text, catId);
+      var sats = parseTLE(text, 'gps');
       allSats  = allSats.concat(sats);
-      loaded  += sats.length;
+      loadedGroups['gps'] = true;
     } else {
-      console.warn('Failed:', catId, err ? err.message : 'no data');
+      console.warn('Failed to load GPS:', err ? err.message : 'no data');
     }
-    document.getElementById('load-msg').textContent =
-      'Loaded ' + loaded + ' satellites (' + done + '/' + total + ' groups)…';
-    if (done === total) {
-      setTimeout(function() {
-        buildMeshes();
-        applyFilters();
-        document.getElementById('panel-sub').textContent =
-          allSats.length.toLocaleString() + ' satellites loaded';
-        document.getElementById('upd-time').textContent =
-          new Date().toUTCString().slice(17, 25) + ' UTC';
-        document.getElementById('loading').style.display = 'none';
-        requestAnimationFrame(animate);
-      }, 100);
-    }
-  }
-  CATS.forEach(function(cat) {
-    fetchGroup(cat.id, function(err, text) { onDone(cat.id, err, text); });
+    
+    buildMeshes();
+    applyFilters();
+    document.getElementById('panel-sub').textContent = allSats.length.toLocaleString() + ' satellites loaded';
+    document.getElementById('upd-time').textContent = new Date().toUTCString().slice(17, 25) + ' UTC';
+    
+    // Dismiss loading screen immediately after GPS finishes
+    document.getElementById('loading').style.display = 'none';
+    requestAnimationFrame(animate);
   });
 }
 
@@ -406,5 +452,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('info').style.display = 'none';
     selected = null; renderList();
   });
-  loadAll();
+  
+  // Start the initialization sequence
+  loadInitial();
 });
