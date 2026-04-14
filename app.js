@@ -1,14 +1,8 @@
 'use strict';
 
+// Temporarily testing just GPS to avoid Celestrak rate limits
 var CATS = [
-  { id:'stations', label:'Space Stations', color:'#00ffcc' },
-  { id:'starlink',  label:'Starlink',       color:'#4488ff' },
-  { id:'gps',       label:'GPS',            color:'#ffcc00' },
-  { id:'weather',   label:'Weather',        color:'#ff8800' },
-  { id:'military',  label:'Military',       color:'#ff4444' },
-  { id:'science',   label:'Science',        color:'#cc44ff' },
-  { id:'amateur',   label:'Amateur',        color:'#44ff88' },
-  { id:'debris',    label:'Debris',         color:'#556677' },
+  { id:'gps', label:'GPS', color:'#ffcc00' }
 ];
 
 var allSats  = [];
@@ -358,4 +352,59 @@ function updateFilterBtns() {
 }
 
 function buildLegend() {
-  var body = document.getElementById('legend-body
+  var body = document.getElementById('legend-body');
+  body.innerHTML = '';
+  CATS.forEach(function(cat) {
+    var row = document.createElement('div');
+    row.className = 'lrow';
+    row.innerHTML = '<div class="ldot" style="background:' + cat.color + '"></div>' +
+                    '<span style="color:#8090a0">' + cat.label + '</span>';
+    body.appendChild(row);
+  });
+}
+
+function loadAll() {
+  var total = CATS.length, done = 0, loaded = 0;
+  function onDone(catId, err, text) {
+    done++;
+    if (!err && text) {
+      var sats = parseTLE(text, catId);
+      allSats  = allSats.concat(sats);
+      loaded  += sats.length;
+    } else {
+      console.warn('Failed:', catId, err ? err.message : 'no data');
+    }
+    document.getElementById('load-msg').textContent =
+      'Loaded ' + loaded + ' satellites (' + done + '/' + total + ' groups)…';
+    if (done === total) {
+      setTimeout(function() {
+        buildMeshes();
+        applyFilters();
+        document.getElementById('panel-sub').textContent =
+          allSats.length.toLocaleString() + ' satellites loaded';
+        document.getElementById('upd-time').textContent =
+          new Date().toUTCString().slice(17, 25) + ' UTC';
+        document.getElementById('loading').style.display = 'none';
+        requestAnimationFrame(animate);
+      }, 100);
+    }
+  }
+  CATS.forEach(function(cat) {
+    fetchGroup(cat.id, function(err, text) { onDone(cat.id, err, text); });
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  initThree();
+  buildFilterBar();
+  buildLegend();
+  document.getElementById('search').addEventListener('input', function(e) {
+    searchQ = e.target.value.toLowerCase().trim();
+    applyFilters();
+  });
+  document.getElementById('info-close').addEventListener('click', function() {
+    document.getElementById('info').style.display = 'none';
+    selected = null; renderList();
+  });
+  loadAll();
+});
