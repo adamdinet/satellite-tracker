@@ -28,21 +28,69 @@ CATS.forEach(function(c){
   loadedGroups[c.id]  = false;
 });
 
+// Map our category IDs to Celestrak's actual group names
+var CELESTRAK_MAP = {
+  'stations': 'stations',
+  'starlink': 'starlink',
+  'gps': 'gps-ops',
+  'weather': 'weather',
+  'military': 'military',
+  'science': 'science',
+  'amateur': 'amateur',
+  'debris': '1999-025' // Specifically tracks debris from the 1999-025 collision
+};
+
 function fetchGroup(catId, done) {
-  var url = '/tle?group=' + catId;
-  fetch(url)
-    .then(function(r){
-      if (!r.ok) throw new Error('HTTP ' + r.status);
+  var groupName = CELESTRAK_MAP[catId] || catId;
+  
+  // By fetching directly from the browser, we bypass Render's blocked IP addresses entirely!
+  var directUrl = 'https://celestrak.org/NORAD/elements/gp.php?GROUP=' + groupName + '&FORMAT=tle';
+  var proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(directUrl);
+
+  // Try direct first, fallback to proxy if the browser complains about CORS
+  fetch(directUrl)
+    .then(function(r) {
+      if (!r.ok) throw new Error('Direct HTTP ' + r.status);
       return r.text();
     })
-    .then(function(txt){ done(null, txt); })
-    .catch(function(e){ done(e, null); });
+    .catch(function(e) {
+      console.warn('Direct fetch blocked, trying proxy...', e);
+      return fetch(proxyUrl).then(function(r2) {
+         if (!r2.ok) throw new Error('Proxy HTTP ' + r2.status);
+         return r2.text();
+      });
+    })
+    .then(function(txt) {
+      // Ensure we actually got TLE data and not an HTML error page
+      if (txt.indexOf('1 ') === -1) throw new Error('Invalid TLE data received');
+      done(null, txt);
+    })
+    .catch(function(e) {
+      done(e, null);
+    });
 }
 
 function parseTLE(text, catId) {
   var lines = text.trim().split('\n').map(function(l){ return l.trim(); }).filter(Boolean);
   var out = [];
+
+  // CUSTOM LIMITS: Prevents the browser from freezing on huge datasets
+  var limits = {
+    'stations': 50,
+    'starlink': 150, // Top 150 Starlink
+    'gps': 50,       
+    'weather': 50,
+    'military': 50,
+    'science': 50,
+    'amateur': 50,
+    'debris': 200    // A generous chunk of debris
+  };
+  var maxLimit = limits[catId] || 50;
+  var count = 0;
+
   for (var i = 0; i + 2 < lines.length; i += 3) {
+    if (count >= maxLimit) break; // Stop parsing once we hit our limit
+
     var name = lines[i].replace(/^0 /, '').trim();
     var l1   = lines[i + 1];
     var l2   = lines[i + 2];
@@ -55,6 +103,7 @@ function parseTLE(text, catId) {
       var period = mm > 0 ? (1440 / mm).toFixed(1) : '?';
       out.push({ name:name, norad:norad, l1:l1, l2:l2, cat:catId,
                  satrec:satrec, inc:inc, period:period, mesh:null, pos:null });
+      count++;
     } catch(e) {}
   }
   return out;
@@ -241,7 +290,6 @@ function animate(ts) {
     
     if (selected && selected.pos) {
       updateInfoCard(selected);
-      // Update visibility cone position in real-time as the satellite moves
       if (visibilityCone) {
         visibilityCone.position.copy(lla2xyz(selected.pos.lat, selected.pos.lon, selected.pos.alt));
         visibilityCone.lookAt(0,0,0);
@@ -311,11 +359,9 @@ function selectSat(sat) {
   renderList();
 
   if (sat.pos) {
-    // 1. Center camera on the satellite
     rotX = sat.pos.lat * (Math.PI / 180);
     rotY = (sat.pos.lon + 90) * (Math.PI / 180);
     
-    // 2. Clear old visibility cone if one exists
     if (visibilityCone) {
       scene.remove(visibilityCone);
       visibilityCone.geometry.dispose();
@@ -323,10 +369,7 @@ function selectSat(sat) {
       visibilityCone = null;
     }
 
-    // 3. Calculate Orbital Geometry for the Cone
     var r = ER + (sat.pos.alt / 6371) * ER;
-    
-    // Set dynamic zoom to be slightly further out than the satellite's orbit
     zoom = r + 1.2; 
     
     var y = (ER * ER) / r;
@@ -335,7 +378,7 @@ function selectSat(sat) {
 
     var geo = new THREE.ConeGeometry(rad, H, 64, 1, true);
     geo.translate(0, -H/2, 0); 
-    geo.rotateX(-Math.PI/2); // FIXED: Aim the base correctly so lookAt() points it AT Earth
+    geo.rotateX(-Math.PI/2); 
 
     var cat = CATS.find(function(c){ return c.id === sat.cat; });
     var col = cat ? cat.color : '#ffffff';
@@ -345,7 +388,7 @@ function selectSat(sat) {
       new THREE.MeshBasicMaterial({
         color: col,
         transparent: true,
-        opacity: 0.3, // INCREASED: Make it glow brighter
+        opacity: 0.3, 
         side: THREE.DoubleSide,
         depthWrite: false,
         blending: THREE.AdditiveBlending
