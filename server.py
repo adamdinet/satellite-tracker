@@ -1,14 +1,6 @@
 """
 Satellite Tracker server.
-Fetches TLE data from Celestrak and serves the app to the browser.
-
-Local usage:
-    python server.py
-    Open http://localhost:8765
-
-Render.com deployment:
-    Reads PORT from environment variable automatically.
-    Anyone can access the public URL Render provides.
+Fetches TLE data from Celestrak (via proxies to bypass Render blocks) and serves the app.
 """
 
 import http.server
@@ -31,20 +23,18 @@ GROUP_MAP = {
 }
 
 def get_tle_urls(group_name):
-    """Return all URL formats to try for a given Celestrak group."""
+    """Return URL formats to try, prioritizing proxies to bypass Render IP blocks."""
+    # The actual correct modern Celestrak URL for TLE data
+    base_url = f"https://celestrak.org/NORAD/elements/gp.php?GROUP={group_name}&FORMAT=tle"
+    
     return [
-        # Current Celestrak GP data API (JSON → TLE format)
-        f"https://celestrak.org/SOCRATES/query.php?GROUP={group_name}&FORMAT=tle",
-        # Legacy /pub/TLE/ path
-        f"https://celestrak.org/pub/TLE/{group_name}.txt",
-        # Alternative GP endpoint
-        f"https://celestrak.org/SOCRATES/query.php?CATNR={group_name}&FORMAT=tle",
-        # Via corsproxy.io
-        f"https://corsproxy.io/?https://celestrak.org/pub/TLE/{group_name}.txt",
-        # Via allorigins
-        f"https://api.allorigins.win/raw?url=https://celestrak.org/pub/TLE/{group_name}.txt",
+        # Try a free public proxy first so Celestrak doesn't see Render's IP
+        f"https://api.allorigins.win/raw?url={base_url}",
+        # Try a secondary proxy just in case the first is down
+        f"https://corsproxy.io/?{urllib.parse.quote(base_url)}",
+        # Try direct access as a final fallback
+        base_url
     ]
-
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
@@ -118,7 +108,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
 
-
 def main():
     import socket
     hostname = socket.gethostname()
@@ -130,15 +119,12 @@ def main():
     server = http.server.HTTPServer(('0.0.0.0', PORT), Handler)
     print(f"\n{'='*55}")
     print(f"  Satellite Tracker Server")
-    print(f"  Your browser:  http://localhost:{PORT}")
-    print(f"  Others on WiFi: http://{local_ip}:{PORT}")
-    print(f"  Press Ctrl+C to stop")
+    print(f"  Running on port: {PORT}")
     print(f"{'='*55}\n")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nServer stopped.")
-
 
 if __name__ == '__main__':
     main()
