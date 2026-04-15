@@ -23,7 +23,7 @@ var dragging = false, px = 0, py = 0;
 var rotX = 0.3, rotY = 0, zoom = 2.8;
 var lastUpd  = 0;
 
-// NEW: Time Machine Variables
+// Time Machine Variables
 var timeMultiplier = 1;
 var virtualTime = new Date();
 var lastFrameTime = Date.now();
@@ -41,10 +41,11 @@ var CELESTRAK_MAP = {
 
 function fetchGroup(catId, done) {
   var groupName = CELESTRAK_MAP[catId] || catId;
-  var directUrl = 'https://celestrak.org/NORAD/elements/gp.php?GROUP=' + groupName + '&FORMAT=tle';
-  var proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(directUrl);
+  // FIXED: Using relative path for Render compatibility
+  var url = '/tle?group=' + catId;
+  var proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent('https://celestrak.org/NORAD/elements/gp.php?GROUP=' + groupName + '&FORMAT=tle');
 
-  fetch(directUrl)
+  fetch(url)
     .then(r => r.ok ? r.text() : Promise.reject())
     .catch(() => fetch(proxyUrl).then(r2 => r2.text()))
     .then(txt => done(null, txt))
@@ -135,13 +136,9 @@ function animate() {
   var delta = now - lastFrameTime;
   lastFrameTime = now;
 
-  // NEW: Update Virtual Time based on multiplier
   virtualTime = new Date(virtualTime.getTime() + (delta * timeMultiplier));
-
-  // NEW: Earth rotation matches time speed (approx 0.0004 rad/frame at real-time)
   earthMesh.rotation.y += 0.0004 * timeMultiplier;
 
-  // Update Satellites
   satGroup.children.forEach(m => {
     var sat = m.userData.sat;
     var pos = getPos(sat.satrec, virtualTime);
@@ -169,7 +166,12 @@ function selectSat(sat) {
   selected = sat;
   document.getElementById('info').style.display = 'block';
   if (visibilityCone) scene.remove(visibilityCone);
-  var r = 1.0 + (sat.pos.alt / 6371), y = 1.0/r, H = r-y, rad = Math.sqrt(1-(1.0/r)**2);
+  
+  // Calculate current pos for the cone
+  var pos = getPos(sat.satrec, virtualTime);
+  if (!pos) return;
+
+  var r = 1.0 + (pos.alt / 6371), y = 1.0/r, H = r-y, rad = Math.sqrt(1-(1.0/r)**2);
   visibilityCone = new THREE.Mesh(new THREE.ConeGeometry(rad, H, 64, 1, true), new THREE.MeshBasicMaterial({ color: getMat(sat.cat).color, transparent:true, opacity:0.3, blending:THREE.AdditiveBlending }));
   visibilityCone.geometry.translate(0, -H/2, 0); visibilityCone.geometry.rotateX(-Math.PI/2);
   scene.add(visibilityCone);
@@ -193,6 +195,7 @@ function loadSpecificGroup(id) {
 
 function buildFilterBar() {
   var bar = document.getElementById('filter-bar');
+  bar.innerHTML = '';
   CATS.forEach(cat => {
     var btn = document.createElement('div'); btn.className = 'fbtn'; btn.textContent = cat.label; btn.dataset.id = cat.id;
     btn.style.borderColor = cat.color; btn.style.color = activeFilters[cat.id] ? '#000' : cat.color;
@@ -208,7 +211,6 @@ function buildFilterBar() {
   });
 }
 
-// NEW: Time Slider Listener
 document.addEventListener('DOMContentLoaded', () => {
   initThree(); buildFilterBar(); buildLegend();
   document.getElementById('time-slider').oninput = (e) => {
