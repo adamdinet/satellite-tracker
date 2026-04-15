@@ -23,7 +23,6 @@ var dragging = false, px = 0, py = 0;
 var rotX = 0.3, rotY = 0, zoom = 2.8;
 var lastUpd  = 0;
 
-// Time Machine Variables
 var timeMultiplier = 1;
 var virtualTime = new Date();
 var lastFrameTime = Date.now();
@@ -40,14 +39,9 @@ var CELESTRAK_MAP = {
 };
 
 function fetchGroup(catId, done) {
-  var groupName = CELESTRAK_MAP[catId] || catId;
-  // FIXED: Using relative path for Render compatibility
   var url = '/tle?group=' + catId;
-  var proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent('https://celestrak.org/NORAD/elements/gp.php?GROUP=' + groupName + '&FORMAT=tle');
-
   fetch(url)
     .then(r => r.ok ? r.text() : Promise.reject())
-    .catch(() => fetch(proxyUrl).then(r2 => r2.text()))
     .then(txt => done(null, txt))
     .catch(e => done(e, null));
 }
@@ -101,9 +95,8 @@ function initThree() {
     map: new THREE.TextureLoader().load('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg')
   }));
   scene.add(earthMesh);
-  scene.add(new THREE.AmbientLight(0x444444, 1.5));
+  scene.add(new THREE.AmbientLight(0xffffff, 0.8));
   var sun = new THREE.DirectionalLight(0xffffff, 1.2); sun.position.set(5,3,5); scene.add(sun);
-
   satGroup = new THREE.Group(); scene.add(satGroup);
   
   renderer.domElement.addEventListener('mousedown', e => { dragging=true; px=e.clientX; py=e.clientY; });
@@ -123,11 +116,19 @@ function buildMeshes() {
   allSats.forEach(sat => {
     var pos = getPos(sat.satrec, virtualTime);
     if (!pos) return;
-    sat.mesh = new THREE.Mesh(new THREE.SphereGeometry(0.006, 4, 4), getMat(sat.cat));
-    sat.mesh.position.copy(lla2xyz(pos.lat, pos.lon, pos.alt));
-    sat.mesh.userData = { sat };
-    satGroup.add(sat.mesh);
+    var m = new THREE.Mesh(new THREE.SphereGeometry(0.006, 4, 4), getMat(sat.cat));
+    m.position.copy(lla2xyz(pos.lat, pos.lon, pos.alt));
+    m.userData = { sat };
+    satGroup.add(m);
   });
+}
+
+function onCanvasClick(e) {
+  var rect = renderer.domElement.getBoundingClientRect();
+  var mouse = new THREE.Vector2(((e.clientX-rect.left)/rect.width)*2-1, -((e.clientY-rect.top)/rect.height)*2+1);
+  var rc = new THREE.Raycaster(); rc.setFromCamera(mouse, camera);
+  var hits = rc.intersectObjects(satGroup.children);
+  if (hits.length) selectSat(hits[0].object.userData.sat);
 }
 
 function animate() {
@@ -135,9 +136,8 @@ function animate() {
   var now = Date.now();
   var delta = now - lastFrameTime;
   lastFrameTime = now;
-
   virtualTime = new Date(virtualTime.getTime() + (delta * timeMultiplier));
-  earthMesh.rotation.y += 0.0004 * timeMultiplier;
+  earthMesh.rotation.y += 0.0004 * (timeMultiplier > 0 ? 1 : (timeMultiplier < 0 ? -1 : 0));
 
   satGroup.children.forEach(m => {
     var sat = m.userData.sat;
@@ -147,10 +147,7 @@ function animate() {
       m.visible = activeFilters[sat.cat] && passesSearch(sat);
       if (selected === sat) {
         updateInfoCard(sat, pos);
-        if (visibilityCone) {
-          visibilityCone.position.copy(m.position);
-          visibilityCone.lookAt(0,0,0);
-        }
+        if (visibilityCone) { visibilityCone.position.copy(m.position); visibilityCone.lookAt(0,0,0); }
       }
     }
   });
@@ -166,13 +163,10 @@ function selectSat(sat) {
   selected = sat;
   document.getElementById('info').style.display = 'block';
   if (visibilityCone) scene.remove(visibilityCone);
-  
-  // Calculate current pos for the cone
   var pos = getPos(sat.satrec, virtualTime);
   if (!pos) return;
-
   var r = 1.0 + (pos.alt / 6371), y = 1.0/r, H = r-y, rad = Math.sqrt(1-(1.0/r)**2);
-  visibilityCone = new THREE.Mesh(new THREE.ConeGeometry(rad, H, 64, 1, true), new THREE.MeshBasicMaterial({ color: getMat(sat.cat).color, transparent:true, opacity:0.3, blending:THREE.AdditiveBlending }));
+  visibilityCone = new THREE.Mesh(new THREE.ConeGeometry(rad, H, 64, 1, true), new THREE.MeshBasicMaterial({ color: CATS.find(c=>c.id===sat.cat).color, transparent:true, opacity:0.3, blending:THREE.AdditiveBlending }));
   visibilityCone.geometry.translate(0, -H/2, 0); visibilityCone.geometry.rotateX(-Math.PI/2);
   scene.add(visibilityCone);
 }
@@ -194,8 +188,7 @@ function loadSpecificGroup(id) {
 }
 
 function buildFilterBar() {
-  var bar = document.getElementById('filter-bar');
-  bar.innerHTML = '';
+  var bar = document.getElementById('filter-bar'); bar.innerHTML = '';
   CATS.forEach(cat => {
     var btn = document.createElement('div'); btn.className = 'fbtn'; btn.textContent = cat.label; btn.dataset.id = cat.id;
     btn.style.borderColor = cat.color; btn.style.color = activeFilters[cat.id] ? '#000' : cat.color;
@@ -211,15 +204,31 @@ function buildFilterBar() {
   });
 }
 
+function buildLegend() {
+  var body = document.getElementById('legend-body'); body.innerHTML = '';
+  CATS.forEach(cat => {
+    var r = document.createElement('div'); r.className='lrow';
+    r.innerHTML=`<div class="ldot" style="background:${cat.color}"></div><span>${cat.label}</span>`;
+    body.appendChild(r);
+  });
+}
+
+function loadInitial() {
+  fetchGroup('gps', (err, txt) => {
+    if (!err) { allSats = parseTLE(txt, 'gps'); loadedGroups['gps']=true; buildMeshes(); applyFilters(); }
+    document.getElementById('loading').style.display='none';
+    requestAnimationFrame(animate);
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   initThree(); buildFilterBar(); buildLegend();
   document.getElementById('time-slider').oninput = (e) => {
     timeMultiplier = parseInt(e.target.value);
-    var label = timeMultiplier === 1 ? 'Real-time' : (timeMultiplier > 0 ? timeMultiplier + 'x Fast' : Math.abs(timeMultiplier) + 'x Reverse');
-    document.getElementById('speed-val').textContent = label;
+    document.getElementById('speed-val').textContent = timeMultiplier === 1 ? 'Real-time' : timeMultiplier + 'x Speed';
   };
   document.getElementById('search').oninput = (e) => { searchQ = e.target.value.toLowerCase(); applyFilters(); };
-  document.getElementById('info-close').onclick = () => { document.getElementById('info').style.display='none'; selected=null; scene.remove(visibilityCone); };
+  document.getElementById('info-close').onclick = () => { document.getElementById('info').style.display='none'; selected=null; if(visibilityCone) scene.remove(visibilityCone); };
   loadInitial();
 });
 
@@ -227,6 +236,3 @@ function getMat(id) { return new THREE.MeshBasicMaterial({ color: CATS.find(c=>c
 function passesSearch(s) { return !searchQ || s.name.toLowerCase().includes(searchQ) || s.norad.includes(searchQ); }
 function applyFilters() { filtered = allSats.filter(s => activeFilters[s.cat] && passesSearch(s)); renderList(); document.getElementById('sat-count').textContent = filtered.length; }
 function renderList() { var list = document.getElementById('sat-list'); list.innerHTML = ''; filtered.slice(0,100).forEach(s => { var d = document.createElement('div'); d.className = 'sitem'; d.innerHTML = `<div class="sname">${s.name}</div><div class="smeta">NORAD ${s.norad}</div>`; d.onclick = () => selectSat(s); list.appendChild(d); }); }
-function buildLegend() { var body = document.getElementById('legend-body'); CATS.forEach(cat => { var r = document.createElement('div'); r.className='lrow'; r.innerHTML=`<div class="ldot" style="background:${cat.color}"></div><span>${cat.label}</span>`; body.appendChild(r); }); }
-function loadInitial() { fetchGroup('gps', (err, txt) => { if (!err) { allSats = parseTLE(txt, 'gps'); loadedGroups['gps']=true; buildMeshes(); applyFilters(); } document.getElementById('loading').style.display='none'; requestAnimationFrame(animate); }); }
-function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
